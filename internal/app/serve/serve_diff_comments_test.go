@@ -148,19 +148,23 @@ func TestParseUserMessageContentRejectsInvalidDiffCommentMetadata(t *testing.T) 
 	}
 }
 
-func TestParseUserMessageContentAcceptsLast3TurnsDiffComment(t *testing.T) {
-	comment := testDiffComment()
-	comment.Scope = fileChangeScopeLast3Turns
-	comment.FileChangeSeq = 42
-	content, err := json.Marshal([]any{
-		map[string]any{"type": "diff_comment", "diff_comment": comment},
-		map[string]any{"type": "input_text", "text": "provider text"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := parseUserMessageContent(content); err != nil {
-		t.Fatalf("parse last-three-turn comment: %v", err)
+func TestParseUserMessageContentAcceptsMultiTurnDiffComment(t *testing.T) {
+	for _, scope := range []string{fileChangeScopeLast3Turns, fileChangeScopeAllTurns} {
+		t.Run(scope, func(t *testing.T) {
+			comment := testDiffComment()
+			comment.Scope = scope
+			comment.FileChangeSeq = 42
+			content, err := json.Marshal([]any{
+				map[string]any{"type": "diff_comment", "diff_comment": comment},
+				map[string]any{"type": "input_text", "text": "provider text"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parseUserMessageContent(content); err != nil {
+				t.Fatalf("parse multi-turn comment: %v", err)
+			}
+		})
 	}
 }
 
@@ -174,6 +178,7 @@ func TestParseUserMessageContentRejectsInvalidDiffCommentScopeAndSequence(t *tes
 		{name: "unknown scope", scope: "committed", seq: 0, wantErr: "scope must be"},
 		{name: "last turn zero sequence", scope: "last_turn", seq: 0, wantErr: "must be positive for last_turn"},
 		{name: "last three turns zero sequence", scope: "last_3_turns", seq: 0, wantErr: "must be positive for last_3_turns"},
+		{name: "all turns zero sequence", scope: "all_turns", seq: 0, wantErr: "must be positive for all_turns"},
 		{name: "negative git sequence", scope: "staged", seq: -1, wantErr: "must be zero for Git diff scopes"},
 		{name: "positive git sequence", scope: "unstaged", seq: 7, wantErr: "must be zero for Git diff scopes"},
 	} {

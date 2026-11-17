@@ -111,6 +111,11 @@ func TestHandleSessionsSelectedSessionSideloadsStartupMetadata(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	for i := 2; i <= 4; i++ {
+		if err := fileStore.RecordRunStart(ctx, filetrack.RunRecord{SessionID: changed.ID, RunID: fmt.Sprintf("run-%d", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	planStore := sessionStore.(session.PlanSnapshotStore)
 	if _, err := planStore.SavePlanSnapshot(ctx, changed.ID, planpkg.Snapshot{Plan: []planpkg.Step{
 		{Step: "Finished", Status: planpkg.StatusCompleted},
@@ -291,7 +296,7 @@ func TestSessionFileChangesEndpoints(t *testing.T) {
 
 	t.Run("list", func(t *testing.T) {
 		code, body := getSessionPath(t, srv, "/v1/sessions/sess-1/file-changes")
-		if code != http.StatusOK {
+		if code != http.StatusOK || body["has_older_turns"] != false {
 			t.Fatalf("status = %d, body = %v", code, body)
 		}
 		changes, ok := body["file_changes"].([]any)
@@ -354,6 +359,36 @@ func TestSessionFileChangesEndpoints(t *testing.T) {
 			srv.handleSessionByID(rr, req)
 			if rr.Code != http.StatusOK || string(rr.Body.Bytes()) != string(tc.want) {
 				t.Fatalf("%s image status=%d body=%q", tc.side, rr.Code, rr.Body.Bytes())
+			}
+		}
+	})
+
+	t.Run("all turns outside git", func(t *testing.T) {
+		code, body := getSessionPath(t, srv, "/v1/sessions/sess-window/file-changes?scope=all_turns")
+		if code != http.StatusOK || body["scope"] != "all_turns" || body["git"] != false || body["has_older_turns"] != true {
+			t.Fatalf("list status=%d body=%#v", code, body)
+		}
+		changes := body["file_changes"].([]any)
+		if len(changes) != 3 {
+			t.Fatalf("changes = %#v, want all three files", changes)
+		}
+		for _, path := range []string{"/work/old.txt", "/work/shared.md"} {
+			code, diff := getSessionPath(t, srv, "/v1/sessions/sess-window/file-changes/diff?scope=all_turns&snapshot_seq=5&path="+path)
+			if code != http.StatusOK || diff["content_available"] != true {
+				t.Fatalf("diff status=%d body=%#v", code, diff)
+			}
+		}
+		for _, tc := range []struct{ path, side, want string }{
+			{path: "/work/shared.md", side: "before", want: "base\n"},
+			{path: "/work/shared.md", side: "after", want: "four\n"},
+			{path: "/work/window.png", side: "before", want: string(windowPNG1)},
+			{path: "/work/window.png", side: "after", want: string(windowPNG3)},
+		} {
+			req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess-window/file-changes/content?scope=all_turns&snapshot_seq=5&path="+tc.path+"&side="+tc.side, nil)
+			rr := httptest.NewRecorder()
+			srv.handleSessionByID(rr, req)
+			if rr.Code != http.StatusOK || rr.Body.String() != tc.want {
+				t.Fatalf("%s %s content status=%d body=%q", tc.path, tc.side, rr.Code, rr.Body.String())
 			}
 		}
 	})
@@ -538,6 +573,19 @@ func TestSessionFileChangesEndpoints(t *testing.T) {
 			t.Fatalf("status = %d, want 405", rr.Code)
 		}
 	})
+}
+
+func TestSessionFileChangesOlderTurns(t *testing.T) {
+	srv, store := newFileChangesTestServer(t)
+	for turn := 1; turn <= 4; turn++ {
+		if err := store.RecordRunStart(context.Background(), filetrack.RunRecord{SessionID: "empty-turns", RunID: fmt.Sprintf("run-%d", turn)}); err != nil {
+			t.Fatal(err)
+		}
+		code, body := getSessionPath(t, srv, "/v1/sessions/empty-turns/file-changes")
+		if code != http.StatusOK || body["has_older_turns"] != (turn > 3) {
+			t.Fatalf("turn %d: status=%d body=%#v", turn, code, body)
+		}
+	}
 }
 
 func TestSessionFileChangesDisabled(t *testing.T) {

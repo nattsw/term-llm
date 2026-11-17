@@ -1,6 +1,7 @@
 export const DIFF_SCOPES = [
   'last_turn',
   'last_3_turns',
+  'all_turns',
   'uncommitted',
   'unstaged',
   'staged',

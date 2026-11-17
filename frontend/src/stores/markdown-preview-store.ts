@@ -230,7 +230,7 @@ export async function revalidateGitMarkdownComments(
   comments: DiffComment[],
 ): Promise<boolean> {
   const scope = normalizeDiffScope(context.diff.peek().scope);
-  if (scope === 'last_turn' || scope === 'last_3_turns') return true;
+  if (scope === 'last_turn' || scope === 'last_3_turns' || scope === 'all_turns') return true;
   const files = context.diff.peek().files.filter((file) => {
     const side = ['delete', 'deleted', 'remove', 'removed'].includes(
       String(file.status || '').toLowerCase(),

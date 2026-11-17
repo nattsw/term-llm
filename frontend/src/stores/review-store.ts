@@ -161,7 +161,7 @@ export class ReviewStore {
     const session = this.host.activeSession.value;
     if (!session) return;
     this.host.closePlan();
-    this.diff.value = { ...this.diff.value, sessionId: session.id, open: !this.diff.value.open };
+    this.diff.value = { ...this.diff.value, open: !this.diff.value.open };
     this.host.restartStatusPoll();
     if (this.diff.value.open) await this.loadDiff(true);
   }
@@ -201,7 +201,10 @@ export class ReviewStore {
     const session = this.host.activeSession.value;
     if (!session) return;
     const owner = session.id;
-    const scope = normalizeDiffScope(this.diff.value.scope);
+    const previous = this.diff.peek();
+    const scope = normalizeDiffScope(
+      previous.scope === 'all_turns' && previous.sessionId !== owner ? 'last_turn' : previous.scope,
+    );
     const epoch = ++this.operationState.loadEpoch;
     this.diff.value = {
       ...this.diff.value,

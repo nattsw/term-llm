@@ -64,6 +64,7 @@ export interface SideQuestionState {
 }
 
 export interface DiffState {
+  hasOlderTurns?: boolean;
   open: boolean;
   sessionId: string;
   scope: string;

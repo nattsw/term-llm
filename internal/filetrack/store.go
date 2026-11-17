@@ -1266,7 +1266,7 @@ type recentRunWindow struct {
 }
 
 func (s *Store) latestRunWindow(ctx context.Context, sessionID string, limit int, snapshotSeq int64) (recentRunWindow, error) {
-	if limit < 1 {
+	if limit == 0 {
 		limit = 1
 	}
 	var rows *sql.Rows
@@ -1508,7 +1508,7 @@ func (s *Store) ListSessionChanges(ctx context.Context, sessionID string) ([]Cum
 }
 
 // ListRecentRunChanges returns the cumulative changes across the latest file
-// tracking runs, including an in-progress run. Rows without run identities are excluded.
+// tracking runs (negative means all), including an in-progress run. Legacy rows without run IDs are excluded.
 func (s *Store) ListRecentRunChanges(ctx context.Context, sessionID string, runs int) ([]CumulativeChange, error) {
 	window, err := s.latestRunWindow(ctx, sessionID, runs, 0)
 	if err != nil || len(window.runIDs) == 0 {
@@ -1519,7 +1519,7 @@ func (s *Store) ListRecentRunChanges(ctx context.Context, sessionID string, runs
 	if err != nil {
 		return nil, err
 	}
-	if runs > 1 {
+	if runs != 1 {
 		for i := range changes {
 			changes[i].SnapshotSeq = window.snapshotSeq
 		}

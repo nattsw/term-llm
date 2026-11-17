@@ -40,7 +40,9 @@ export function reviewCommentPayload(comment: DiffComment): Record<string, unkno
     scope: comment.scope || 'last_turn',
     side: comment.side,
     line: comment.line,
-    file_change_seq: ['last_turn', 'last_3_turns'].includes(comment.scope || 'last_turn')
+    file_change_seq: ['last_turn', 'last_3_turns', 'all_turns'].includes(
+      comment.scope || 'last_turn',
+    )
       ? Number(comment.fileChangeSeq) || 0
       : 0,
     line_text: comment.context || '',

@@ -17,6 +17,7 @@ import (
 const (
 	fileChangeScopeLastTurn    = "last_turn"
 	fileChangeScopeLast3Turns  = "last_3_turns"
+	fileChangeScopeAllTurns    = "all_turns"
 	fileChangeScopeUncommitted = string(gitdiff.ScopeUncommitted)
 	fileChangeScopeUnstaged    = string(gitdiff.ScopeUnstaged)
 	fileChangeScopeStaged      = string(gitdiff.ScopeStaged)
@@ -32,6 +33,7 @@ type fileChangeScopeSpec struct {
 var fileChangeScopeSpecs = [...]fileChangeScopeSpec{
 	{name: fileChangeScopeLastTurn, runs: 1},
 	{name: fileChangeScopeLast3Turns, runs: 3},
+	{name: fileChangeScopeAllTurns, runs: -1},
 	{name: fileChangeScopeUncommitted},
 	{name: fileChangeScopeUnstaged},
 	{name: fileChangeScopeStaged},
@@ -144,7 +146,7 @@ func lookupFileChangeScope(value string) (fileChangeScopeSpec, bool) {
 
 func fileChangeScopeRunWindow(scope string) (int, bool) {
 	spec, ok := lookupFileChangeScope(scope)
-	return spec.runs, ok && spec.runs > 0
+	return spec.runs, ok && spec.runs != 0
 }
 
 func fileChangeScopeNames() string {
@@ -298,7 +300,8 @@ func (s *serveServer) handleSessionFileChanges(w http.ResponseWriter, r *http.Re
 	} else {
 		changes, err = repo.List(r.Context(), gitdiff.Scope(scope))
 	}
-	if err != nil {
+	recentRuns, runErr := store.RecentRunIDs(r.Context(), sessionID, 4)
+	if err != nil || runErr != nil {
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error", "failed to load file changes")
 		return
 	}
@@ -364,7 +367,8 @@ func (s *serveServer) handleSessionFileChanges(w http.ResponseWriter, r *http.Re
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"file_changes": changes, "file_change_summary": summary, "git": isGit, "scope": scope,
-		"snapshot_token": store.CurrentSnapshotToken(r.Context(), sessionID), "materializations": materializations,
+		"has_older_turns": len(recentRuns) > 3,
+		"snapshot_token":  store.CurrentSnapshotToken(r.Context(), sessionID), "materializations": materializations,
 		"observations":      map[string]any{"total_created": totalCreated, "total_modified": totalModified, "total_deleted": totalDeleted, "batches": observationBatches, "truncated": observationTruncated, "coverage_status": coverage},
 		"claim_diagnostics": claimDiagnostics,
 	})

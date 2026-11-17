@@ -38,7 +38,7 @@ export class ReviewOperations {
       const state = diff.peek();
       if (!this.isCurrentLoad(owner, scope, epoch)) return;
       const existing = new Map(state.files.map((file) => [file.path, file]));
-      const turnScope = scope === 'last_turn' || scope === 'last_3_turns';
+      const turnScope = scope === 'last_turn' || scope === 'last_3_turns' || scope === 'all_turns';
       const refreshContexts = new Map<string, number>();
       const refreshMarkdown = new Set<string>();
       const files = sortDiffFiles(
@@ -151,7 +151,7 @@ export class ReviewOperations {
       let newlyStale = 0;
       const comments = state.comments.map((comment) => {
         if (comment.sessionId !== owner || comment.state === 'stale') return comment;
-        const commentTurnScope = ['last_turn', 'last_3_turns'].includes(
+        const commentTurnScope = ['last_turn', 'last_3_turns', 'all_turns'].includes(
           normalizeDiffScope(comment.scope || scope),
         );
         const file = files.find((entry) => entry.path === comment.path);
@@ -201,6 +201,7 @@ export class ReviewOperations {
         claimDiagnostics,
         unavailableLineCountFiles: Number(summary.line_counts_unavailable_files) || 0,
         git: Boolean(data.git),
+        hasOlderTurns: Boolean(data.has_older_turns),
         loading: false,
       };
       if (newlyStale)
@@ -613,7 +614,7 @@ export class ReviewOperations {
     if (
       payloads.some(
         (comment) =>
-          ['last_turn', 'last_3_turns'].includes(String(comment.scope)) &&
+          ['last_turn', 'last_3_turns', 'all_turns'].includes(String(comment.scope)) &&
           Number(comment.file_change_seq) <= 0,
       )
     ) {

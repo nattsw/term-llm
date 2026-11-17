@@ -2077,6 +2077,39 @@ describe('Preact-owned chat surfaces', () => {
     );
   });
 
+  it.each([false, true])('offers All turns only with older turns (%s)', async (hasOlderTurns) => {
+    const store = createStore();
+    store.diff.value = {
+      ...store.diff.value,
+      open: true,
+      sessionId: 's1',
+      git: false,
+      hasOlderTurns,
+    };
+    store.endpoints.fileChanges = vi.fn(async () => ({
+      scope: 'all_turns',
+      has_older_turns: true,
+      file_changes: [],
+    }));
+    render(
+      <StoreContext.Provider value={store}>
+        <DiffSidebar />
+      </StoreContext.Provider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Change scope' }));
+    expect(screen.queryByRole('option', { name: 'Uncommitted' })).not.toBeInTheDocument();
+    if (hasOlderTurns) {
+      await userEvent.click(screen.getByRole('option', { name: 'All turns' }));
+      await vi.waitFor(() =>
+        expect(store.endpoints.fileChanges).toHaveBeenCalledWith('s1', 'all_turns'),
+      );
+      expect(store.diff.value.scope).toBe('all_turns');
+      expect(store.diff.value.hasOlderTurns).toBe(true);
+    } else {
+      expect(screen.queryByRole('option', { name: 'All turns' })).not.toBeInTheDocument();
+    }
+  });
+
   it('renders managed worktree patches in the highlighted Changes panel', async () => {
     const store = createStore();
     store.diff.value = {

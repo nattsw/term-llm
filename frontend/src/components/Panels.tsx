@@ -908,6 +908,7 @@ function File({
 const DIFF_SCOPE_OPTIONS = [
   ['last_turn', 'Last turn'],
   ['last_3_turns', 'Last 3 turns'],
+  ['all_turns', 'All turns'],
   ['uncommitted', 'Uncommitted'],
   ['unstaged', 'Unstaged'],
   ['staged', 'Staged'],
@@ -918,9 +919,10 @@ function DiffScopePicker() {
   const state = store.diff.value;
   const gitScopesAvailable =
     state.git || store.worktreesAvailable() || store.worktreesEnabled.value;
-  const options = (gitScopesAvailable ? DIFF_SCOPE_OPTIONS : DIFF_SCOPE_OPTIONS.slice(0, 2)).map(
-    ([value, label]) => ({ value, label }),
-  );
+  const options = DIFF_SCOPE_OPTIONS.filter(([value]) => {
+    if (value === 'all_turns') return state.hasOlderTurns;
+    return value === 'last_turn' || value === 'last_3_turns' || gitScopesAvailable;
+  }).map(([value, label]) => ({ value, label }));
   return (
     <ChipPicker
       ariaLabel="Change scope"

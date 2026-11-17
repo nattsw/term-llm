@@ -64,6 +64,28 @@ const navigate = (view: ReturnType<typeof makeHost>, sessionId: string) => {
 beforeEach(() => localStorage.clear());
 
 describe('ReviewStore navigation while operations load', () => {
+  it('resets All turns when opening another chat', async () => {
+    const { services, view, store } = makeReview();
+    try {
+      store.diff.value = {
+        ...store.diff.value,
+        sessionId: 's1',
+        scope: 'all_turns',
+        hasOlderTurns: true,
+      };
+      navigate(view, 's2');
+      services.endpoints.fileChanges = vi.fn(async () => ({
+        file_changes: [],
+        has_older_turns: false,
+      }));
+      await store.toggleDiff();
+      expect(services.endpoints.fileChanges).toHaveBeenCalledWith('s2', 'last_turn');
+      expect(store.diff.value).toMatchObject({ scope: 'last_turn', hasOlderTurns: false });
+    } finally {
+      services.dispose();
+    }
+  });
+
   it('does not fetch a diff load for a session that changed during import', async () => {
     const { services, view, store } = makeReview();
     try {

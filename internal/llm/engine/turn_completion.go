@@ -136,7 +136,13 @@ func (e *Engine) completeTextTurn(c *engineTurnCompletion) (bool, error) {
 				compaction.restoreSoftFailure(originalTools, originalToolChoice, errCompactionBriefUnusable)
 				return true, errEngineTurnRetry
 			}
-			if textBuilder.Len() == 0 && len(providerReplayParts) > 0 && attempt < maxTurns-1 {
+			// A turn that only carries replay items (reasoning, native discovery)
+			// has not answered yet. Native discovery also needs the next turn even
+			// when the model wrote text alongside it: the text is usually a
+			// commentary line ("I will look up..."), and the model has not seen the
+			// discovered tools yet. Ending here dropped the lookup and stalled the
+			// chat until the user said "go on".
+			if (textBuilder.Len() == 0 || partsContainDiscoveryCall(providerReplayParts)) && len(providerReplayParts) > 0 && attempt < maxTurns-1 {
 				req.Messages = append(req.Messages, finalMsg)
 				if turnCallback != nil {
 					cbCtx, cancel := callbackContext(ctx)

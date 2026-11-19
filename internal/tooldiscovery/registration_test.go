@@ -164,8 +164,14 @@ func TestNativeDiscoveryRechecksInstalledOriginAndSchema(t *testing.T) {
 			if _, err := planner.ResolveProviderToolCall("native-conflict-run", core.ToolCall{Namespace: target.Namespace, ChildName: target.ChildName}); err == nil {
 				t.Fatal("native child resolved to the replacement occupant")
 			}
-			if _, err := planner.ResolveNativeToolDiscovery(context.Background(), "native-conflict-run", call); err == nil {
-				t.Fatal("native discovery re-advertised the replaced capability")
+			rediscovered, err := planner.ResolveNativeToolDiscovery(context.Background(), "native-conflict-run", call)
+			if err != nil {
+				t.Fatalf("rediscovery failed the run: %v", err)
+			}
+			for _, tool := range rediscovered.Tools {
+				if tool.Spec.Name == target.Name {
+					t.Fatal("native discovery re-advertised the replaced capability")
+				}
 			}
 			replay := core.Request{SessionID: req.SessionID, Messages: []core.Message{{Role: core.RoleAssistant, Parts: []core.Part{
 				{Type: core.PartDiscoveryCall, DiscoveryCall: &call},

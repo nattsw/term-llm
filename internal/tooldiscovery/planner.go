@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/term-llm/term-llm/internal/config"
 	"github.com/term-llm/term-llm/internal/llm/core"
@@ -743,13 +745,24 @@ func (p *Planner) ResolveNativeToolDiscovery(_ context.Context, runID string, ca
 	if !allowed {
 		return core.ToolDiscoveryOutput{}, fmt.Errorf("tool_search cannot run after the discovery cutoff")
 	}
+	// A lookup the model got wrong (a guessed or stale tool name, an ambiguous
+	// name, bad arguments, or a catalogue that is still starting after a
+	// restart) is an answer, not a run failure. The portable tool_search
+	// reports these as a tool error; native tool_search_output has no error
+	// field, so search by the words of the requested names instead, and return
+	// an empty result if that finds nothing.
 	input, err := decodeSearchInput(call.Arguments)
 	if err != nil {
-		return core.ToolDiscoveryOutput{}, err
+		return p.emptyNativeToolDiscoveryOutput(runID, call, err), nil
 	}
 	loaded, already, _, _, _, _, err := p.activate(runID, input)
+	if err != nil && len(input.ToolNames) > 0 {
+		if query := toolNamesSearchQuery(input.ToolNames); query != "" {
+			loaded, already, _, _, _, _, err = p.activate(runID, searchInput{Query: query, MaxResults: input.MaxResults})
+		}
+	}
 	if err != nil {
-		return core.ToolDiscoveryOutput{}, err
+		return p.emptyNativeToolDiscoveryOutput(runID, call, err), nil
 	}
 	selected := make(map[string]mcp.CatalogTool, len(loaded)+len(already))
 	for _, tool := range loaded {
@@ -783,6 +796,37 @@ func (p *Planner) ResolveNativeToolDiscovery(_ context.Context, runID string, ca
 		output.Tools = append(output.Tools, core.DiscoveredTool{Spec: tool.ToolSpec(), SchemaHash: tool.SchemaHash})
 	}
 	return output, nil
+}
+
+// toolNamesSearchQuery turns guessed tool names such as
+// "mcp__github__pull_request_read" into a search query ("github pull request
+// read").
+func toolNamesSearchQuery(names []string) string {
+	var words []string
+	for _, name := range names {
+		for _, word := range strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		}) {
+			if word != "mcp" {
+				words = append(words, word)
+			}
+		}
+	}
+	query := strings.Join(words, " ")
+	if utf8.RuneCountInString(query) > maxSearchQueryRunes {
+		return ""
+	}
+	return query
+}
+
+func (p *Planner) emptyNativeToolDiscoveryOutput(runID string, call core.ToolDiscoveryCall, cause error) core.ToolDiscoveryOutput {
+	runtimeoutput.Debug("native tool discovery found no tools", "run_id", runID, "call_id", call.ID, "reason", cause.Error())
+	output := core.ToolDiscoveryOutput{CallID: call.ID}
+	if snapshot := p.manager.CatalogueSnapshot(); snapshot != nil {
+		output.CatalogueHash = snapshot.Hash
+		output.CatalogueGen = snapshot.Generation
+	}
+	return output
 }
 
 func (p *Planner) FallbackNativeToolDiscovery(runID string, cause error, committed bool) (bool, string) {

@@ -429,9 +429,12 @@ func TestNativeSearchCannotLoadDeniedTool(t *testing.T) {
 	if _, err := planner.PrepareTurn(context.Background(), provider, &req, "denied-run", 0, 3); err != nil {
 		t.Fatal(err)
 	}
-	_, err = planner.ResolveNativeToolDiscovery(context.Background(), "denied-run", core.ToolDiscoveryCall{ID: "search", Arguments: json.RawMessage(`{"tool_names":["special_action"]}`)})
-	if err == nil || !strings.Contains(err.Error(), "unavailable or denied") {
-		t.Fatalf("denied search error = %v", err)
+	output, err := planner.ResolveNativeToolDiscovery(context.Background(), "denied-run", core.ToolDiscoveryCall{ID: "search", Arguments: json.RawMessage(`{"tool_names":["special_action"]}`)})
+	if err != nil {
+		t.Fatalf("denied search failed the run: %v", err)
+	}
+	if output.CallID != "search" || len(output.Tools) != 0 {
+		t.Fatalf("denied search output = %#v, want an empty result for call search", output)
 	}
 }
 
@@ -616,4 +619,153 @@ func TestNativeForcedToolSearchWithinSmallTurnBudget(t *testing.T) {
 	if len(provider.requests) != 3 {
 		t.Fatalf("provider requests = %d, want 3", len(provider.requests))
 	}
+}
+
+// drainNativeStream reads a run to the end and fails on any engine error,
+// including errors delivered as events.
+func drainNativeStream(t *testing.T, stream core.Stream) {
+	t.Helper()
+	defer stream.Close()
+	for {
+		event, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		if err != nil {
+			t.Fatalf("stream: %v", err)
+		}
+		if event.Type == core.EventError && event.Err != nil {
+			t.Fatalf("stream error event: %v", event.Err)
+		}
+	}
+}
+
+func nativeDiscoveryOutputs(messages []core.Message) []*core.ToolDiscoveryOutput {
+	var outputs []*core.ToolDiscoveryOutput
+	for _, message := range messages {
+		for _, part := range message.Parts {
+			if part.Type == core.PartDiscoveryOutput && part.DiscoveryOutput != nil {
+				outputs = append(outputs, part.DiscoveryOutput)
+			}
+		}
+	}
+	return outputs
+}
+
+// Models often write a short commentary line ("I will look up...") in the same
+// response as a native tool_search. The discovered tools only reach the model
+// on the next turn, so the text must not end the run.
+func TestNativeDiscoveryWithCommentaryTextContinuesRun(t *testing.T) {
+	manager := startDiscoveryTestManager(t)
+	defer manager.StopAll()
+	provider := &nativeScriptProvider{supported: true, turns: []nativeScriptTurn{
+		{events: []core.Event{
+			{Type: core.EventTextDelta, Text: "I will look up the special action tool."},
+			{Type: core.EventDiscoveryCall, DiscoveryCall: &core.ToolDiscoveryCall{ID: "search-1", Arguments: json.RawMessage(`{"tool_names":["special_action"]}`)}},
+		}},
+		{events: []core.Event{{Type: core.EventToolCall, Tool: &core.ToolCall{ID: "external-1", Namespace: "federation", ChildName: "special_action", Arguments: json.RawMessage(`{"project_id":"P-42"}`)}}}},
+		{events: []core.Event{{Type: core.EventTextDelta, Text: "done"}}},
+	}}
+	eng := engine.NewEngine(provider, nil)
+	if _, err := NewPlanner(config.ToolDiscoveryConfig{Mode: "deferred", Strategy: "native"}, manager, eng); err != nil {
+		t.Fatal(err)
+	}
+	stream, err := eng.Stream(context.Background(), core.Request{
+		EnableToolDiscovery: true,
+		SessionID:           "commentary",
+		Model:               "native-model",
+		Messages:            []core.Message{core.UserText("perform the special action")},
+		MaxTurns:            4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainNativeStream(t, stream)
+
+	if len(provider.requests) != 3 {
+		t.Fatalf("provider requests = %d, want 3 (the commentary turn ended the run)", len(provider.requests))
+	}
+	outputs := nativeDiscoveryOutputs(provider.requests[1].Messages)
+	if len(outputs) != 1 || len(outputs[0].Tools) != 1 || outputs[0].Tools[0].Spec.Name != "federation__special_action" {
+		t.Fatalf("second request discovery outputs = %#v", outputs)
+	}
+}
+
+// A guessed or stale tool name (for example one remembered from before a
+// restart) must come back as an empty result the model can recover from, not
+// fail the whole run.
+func TestNativeDiscoveryUnknownToolNameKeepsRunGoing(t *testing.T) {
+	manager := startDiscoveryTestManager(t)
+	defer manager.StopAll()
+	provider := &nativeScriptProvider{supported: true, turns: []nativeScriptTurn{
+		{events: []core.Event{{Type: core.EventDiscoveryCall, DiscoveryCall: &core.ToolDiscoveryCall{ID: "search-1", Arguments: json.RawMessage(`{"tool_names":["mcp__github__pull_request_read"]}`)}}}},
+		{events: []core.Event{{Type: core.EventDiscoveryCall, DiscoveryCall: &core.ToolDiscoveryCall{ID: "search-2", Arguments: json.RawMessage(`{"tool_names":["special_action"]}`)}}}},
+		{events: []core.Event{{Type: core.EventToolCall, Tool: &core.ToolCall{ID: "external-1", Namespace: "federation", ChildName: "special_action", Arguments: json.RawMessage(`{"project_id":"P-42"}`)}}}},
+		{events: []core.Event{{Type: core.EventTextDelta, Text: "done"}}},
+	}}
+	eng := engine.NewEngine(provider, nil)
+	if _, err := NewPlanner(config.ToolDiscoveryConfig{Mode: "deferred", Strategy: "native"}, manager, eng); err != nil {
+		t.Fatal(err)
+	}
+	stream, err := eng.Stream(context.Background(), core.Request{
+		EnableToolDiscovery: true,
+		SessionID:           "unknown-name",
+		Model:               "native-model",
+		Messages:            []core.Message{core.UserText("perform the special action")},
+		MaxTurns:            6,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainNativeStream(t, stream)
+
+	if len(provider.requests) != 4 {
+		t.Fatalf("provider requests = %d, want 4", len(provider.requests))
+	}
+	for _, output := range nativeDiscoveryOutputs(provider.requests[1].Messages) {
+		if output.CallID == "search-1" && len(output.Tools) != 0 {
+			t.Fatalf("unknown name loaded tools: %#v", output.Tools)
+		}
+	}
+	outputs := nativeDiscoveryOutputs(provider.requests[2].Messages)
+	if len(outputs) == 0 || outputs[len(outputs)-1].CallID != "search-2" || len(outputs[len(outputs)-1].Tools) != 1 || outputs[len(outputs)-1].Tools[0].Spec.Name != "federation__special_action" {
+		t.Fatalf("retry discovery outputs = %#v", outputs)
+	}
+}
+
+// A guessed name that shares words with a real tool finds it through a search
+// on those words.
+func TestNativeDiscoveryGuessedToolNameSearchesItsWords(t *testing.T) {
+	manager := startDiscoveryTestManager(t)
+	defer manager.StopAll()
+	provider := &nativeScriptProvider{supported: true}
+	eng := engine.NewEngine(provider, nil)
+	planner, err := NewPlanner(config.ToolDiscoveryConfig{Mode: "deferred", Strategy: "native"}, manager, eng)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := core.Request{SessionID: "guessed", Model: "native-model"}
+	if _, err := planner.BeginRun(context.Background(), provider, &req, "guessed-run"); err != nil {
+		t.Fatal(err)
+	}
+	defer planner.EndRun("guessed-run")
+	if _, err := planner.PrepareTurn(context.Background(), provider, &req, "guessed-run", 0, 5); err != nil {
+		t.Fatal(err)
+	}
+	output, err := planner.ResolveNativeToolDiscovery(context.Background(), "guessed-run", core.ToolDiscoveryCall{ID: "search", Arguments: json.RawMessage(`{"tool_names":["mcp__federation__special_action_v2"]}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiscoveredTool(output, "federation__special_action") {
+		t.Fatalf("guessed-name output = %#v, want federation__special_action", output.Tools)
+	}
+}
+
+func hasDiscoveredTool(output core.ToolDiscoveryOutput, name string) bool {
+	for _, tool := range output.Tools {
+		if tool.Spec.Name == name {
+			return true
+		}
+	}
+	return false
 }

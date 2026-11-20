@@ -287,7 +287,7 @@ func (p *ChatGPTProvider) Stream(ctx context.Context, req Request) (Stream, erro
 
 	// Build tools. Public-API Pro and advanced Responses controls are not
 	// synthesized for the ChatGPT Codex backend.
-	tools := BuildResponsesTools(req.Tools)
+	tools, strictSchemas := buildChatGPTTools(req.Tools)
 	var toolSearch *ResponsesToolSearchTool
 	if req.NativeToolDiscovery != nil {
 		support := p.NativeToolDiscoverySupport(model)
@@ -355,7 +355,11 @@ func (p *ChatGPTProvider) Stream(ctx context.Context, req Request) (Stream, erro
 		responsesReq.Reasoning.Effort = effort
 	}
 
-	return p.responsesClient.Stream(ctx, responsesReq, req.DebugRaw)
+	stream, err := p.responsesClient.Stream(ctx, responsesReq, req.DebugRaw)
+	if err != nil {
+		return nil, err
+	}
+	return wrapStrictNullStream(stream, strictSchemas), nil
 }
 
 // chatGPTToolsAndChoice returns the tools and tool_choice to send. Forcing the

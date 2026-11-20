@@ -910,25 +910,6 @@ func (c *ResponsesClient) streamWebSocketPrepared(ctx context.Context, req Respo
 	}), nil
 }
 
-func responsesWebSocketEventIsMeaningfulProgress(eventType string, data []byte) bool {
-	switch strings.TrimSpace(eventType) {
-	case "", "response.created", "response.queued", "response.in_progress":
-		return false
-	case "response.function_call_arguments.delta":
-		// A model stuck emitting whitespace into a tool call would otherwise
-		// re-arm the idle timer forever.
-		var event struct {
-			Delta string `json:"delta"`
-		}
-		if err := json.Unmarshal(data, &event); err != nil {
-			return true
-		}
-		return strings.TrimLeft(event.Delta, jsonWhitespace) != ""
-	default:
-		return true
-	}
-}
-
 func addDebugAgeMillis(data map[string]any, key string, now, then time.Time) {
 	if data == nil || key == "" || then.IsZero() {
 		return
